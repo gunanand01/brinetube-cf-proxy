@@ -3,26 +3,26 @@ export default {
     const RENDER_URL = 'https://brinetube-extracter.onrender.com';
     const url = new URL(request.url);
 
-    // Handle /extract with caching
     if (url.pathname === '/extract' && request.method === 'POST') {
       const body = await request.text();
 
-      // Create cache key from body
+      // Cache key with version bump
       const cacheUrl = new URL(url.origin + '/extract');
       cacheUrl.searchParams.set('body', body);
+      cacheUrl.searchParams.set('v', '3'); // ← version bump — purana cache bypass
 
       const cacheKey = new Request(cacheUrl.toString(), {
         method: 'GET',
       });
 
       const cache = caches.default;
-      let response = await cache.match(cacheKey);
+      let cachedResponse = await cache.match(cacheKey);
 
-      if (response) {
-        const newHeaders = new Headers(response.headers);
+      if (cachedResponse) {
+        const newHeaders = new Headers(cachedResponse.headers);
         newHeaders.set('X-Cache', 'HIT');
-        return new Response(response.body, {
-          status: response.status,
+        return new Response(cachedResponse.body, {
+          status: cachedResponse.status,
           headers: newHeaders,
         });
       }
@@ -38,24 +38,27 @@ export default {
       const renderResponse = await fetch(modified);
       const responseBody = await renderResponse.text();
 
-      const cached = new Response(responseBody, {
-        status: renderResponse.status,
-        headers: {
-          'Content-Type': 'application/json',
-          'Cache-Control': 'public, max-age=3600',
-          'X-Cache': 'MISS',
-        },
-      });
-
-      ctx.waitUntil(cache.put(cacheKey, cached.clone()));
-
-      const finalHeaders = new Headers(cached.headers);
+      // Only cache successful responses
+      const finalHeaders = new Headers();
+      finalHeaders.set('Content-Type', 'application/json');
       finalHeaders.set('Access-Control-Allow-Origin', '*');
       finalHeaders.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       finalHeaders.set('Access-Control-Allow-Headers', '*');
+      finalHeaders.set('X-Cache', 'MISS');
 
-      return new Response(cached.body, {
-        status: cached.status,
+      if (renderResponse.ok) {
+        finalHeaders.set('Cache-Control', 'public, max-age=3600');
+
+        const cached = new Response(responseBody, {
+          status: 200,
+          headers: finalHeaders,
+        });
+
+        ctx.waitUntil(cache.put(cacheKey, cached.clone()));
+      }
+
+      return new Response(responseBody, {
+        status: renderResponse.status,
         headers: finalHeaders,
       });
     }
